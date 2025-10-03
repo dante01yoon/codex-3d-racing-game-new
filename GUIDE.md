@@ -3,8 +3,8 @@
 ## GameWorld-centric Flow
 - `index.html` bootstraps the Vite runtime and mounts `#app` for the game canvas.
 - `src/main.ts` imports global styles, creates the canvas, instantiates `GameWorld`, and wires hot-module disposal.
-- `src/game/GameWorld.ts` is the orchestration hub: it wires rendering, the update loop, input, HUD, and gameplay actors around a shared Three.js scene graph.
-- On construction, `GameWorld` creates the `Renderer`, `SceneManager`, `Track`, and `Vehicle`, subscribes to `InputManager` updates, attaches the `Hud`, and enables the `Loop` that drives `update(delta)`.
+- `src/game/GameWorld.ts` orchestrates rendering, update loop, HUD, and gameplay actors; it seeds the starting grid, registers racers with `RaceManager`, and instantiates AI controllers alongside the player vehicle.
+- On construction, `GameWorld` creates the `Renderer`, `SceneManager`, `Track`, `RaceManager`, `Hud`, and `InputManager`, then spins up the `Loop` that drives `update(delta)`.
 
 ## Directory Overview
 - `src/core/` engine-style utilities shared by any scene or mode.
@@ -12,13 +12,15 @@
   - `Renderer.ts` configures the Three.js `WebGLRenderer` (antialiasing, shadows, clear color) and exposes resize/dispose helpers.
   - `SceneManager.ts` owns the root `Scene`, camera, and baseline lighting rig; `onResize` keeps the projection matrix in sync with the viewport.
 - `src/game/` gameplay-specific systems.
-  - `GameWorld.ts` coordinates object lifecycles, camera follow logic, Stats overlay, and HUD updates.
-  - `Vehicle.ts` builds the car mesh and simulates acceleration, braking, turning, and surface-dependent drag using keyboard input snapshots.
-  - `Track.ts` generates a closed circuit from a Catmull-Rom spline, extrudes the road mesh, adds ground/centerline visuals, and exposes helpers like `isPointOnTrack`, `getStartPosition`, and `getStartDirection` for spawn logic.
+  - `GameWorld.ts` coordinates object lifecycles, camera follow logic, Stats overlay, HUD updates, and now handles race grid seeding plus AI controller wiring.
+  - `RaceManager.ts` tracks lap counts, checkpoint progress, total distance, and produces sorted leaderboards for all registered racers.
+  - `AIController.ts` steers AI `Vehicle` instances by sampling forward points on the `Track`, modulating throttle/brake/steer inputs from profile data.
+  - `Vehicle.ts` builds the car mesh, exposes `setTransform`, `getForwardVector`, and configurable handling stats to simulate acceleration, braking, and steering on/off the track surface.
+  - `Track.ts` generates the spline-based circuit, provides spawn helpers, surface checks, checkpoint markers, and progress queries (`getProgress`, `getPointAtDistance`, `getTotalLength`).
 - `src/input/`
-  - `InputManager.ts` listens to WASD/arrow keys, maintains a normalized input state, and notifies subscribers (e.g., `GameWorld` forwarding to `Vehicle`).
+  - `InputManager.ts` listens to WASD/arrow keys, maintains a normalized input state, and notifies subscribers (e.g., the player `Vehicle`).
 - `src/ui/`
-  - `Hud.ts` mounts a DOM overlay that reports speed and off-track warnings; includes cleanup for hot reloads.
+  - `Hud.ts` renders a race overlay with speed, lap/position data, checkpoint progress, off-track warnings, and a trimmed leaderboard view.
 - `src/assets/` placeholder bucket for textures, models, and audio referenced in the README roadmap (empty in this snapshot).
 - `public/` static files copied verbatim by Vite (currently unused).
 
@@ -30,7 +32,7 @@
 
 ## Frame Update Lifecycle (from `GameWorld`)
 1. `Loop` calls `GameWorld.update(delta)` each animation frame.
-2. The player `Vehicle` updates using the latest input and the track-surface flag from `Track.isPointOnTrack`.
-3. `GameWorld` lerps the chase camera using player orientation, renders via `Renderer`, and refreshes HUD telemetry.
-4. `Stats.js` instrumentation wraps the frame for basic performance profiling.
-5. Resize events propagate through `SceneManager` and `Renderer` to keep the viewport aligned with the canvas.
+2. AI controllers compute fresh input snapshots using `Track.getProgress` lookahead and feed their assigned vehicles.
+3. Every racer updates: `Vehicle.update` integrates motion with surface-dependent handling, `Track.getProgress` returns lap/ checkpoint info, and `RaceManager.updateRacerProgress` records standings.
+4. `RaceManager.getLeaderboard` feeds the `Hud`, which reports speed, lap state, checkpoints, and leader snippets; off-track status toggles warning messaging.
+5. Camera lerps toward the player vehicle, `Renderer` draws the scene, `Stats.js` wraps the frame timing, and resize events keep `SceneManager`/`Renderer` aligned with the canvas.

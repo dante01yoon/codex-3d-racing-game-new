@@ -1,5 +1,6 @@
 import {
   BoxGeometry,
+  Color,
   Group,
   Mesh,
   MeshStandardMaterial,
@@ -7,24 +8,43 @@ import {
   Vector3
 } from 'three';
 
-interface InputState {
+export interface VehicleStats {
+  maxOnTrackSpeed: number;
+  maxReverseSpeed: number;
+  acceleration: number;
+  brakingForce: number;
+  turnRate: number;
+}
+
+export interface VehicleConfig {
+  bodyColor?: number;
+  accentColor?: number;
+  stats?: Partial<VehicleStats>;
+}
+
+const DEFAULT_STATS: VehicleStats = {
+  maxOnTrackSpeed: 42,
+  maxReverseSpeed: -12,
+  acceleration: 32,
+  brakingForce: 48,
+  turnRate: 2.2
+};
+
+export interface InputState {
   forward: boolean;
   backward: boolean;
   left: boolean;
   right: boolean;
 }
 
+const DEFAULT_INPUT: InputState = { forward: false, backward: false, left: false, right: false };
 const Y_AXIS = new Vector3(0, 1, 0);
 
 export class Vehicle {
   readonly mesh: Group;
+  private readonly stats: VehicleStats;
   private velocity = 0;
-
-  private readonly maxOnTrackSpeed = 42;
-  private readonly maxReverseSpeed = -12;
-  private readonly acceleration = 32;
-  private readonly brakingForce = 48;
-  private readonly turnRate = 2.2;
+  private input: InputState = { ...DEFAULT_INPUT };
 
   private readonly offTrackAccelerationScalar = 0.45;
   private readonly offTrackTurnScalar = 0.6;
@@ -34,18 +54,26 @@ export class Vehicle {
   private readonly rollingResistanceOnTrack = 0.985;
   private readonly rollingResistanceOffTrack = 0.93;
 
-  private input: InputState = { forward: false, backward: false, left: false, right: false };
-
   private readonly tempDirection = new Vector3();
   private readonly tempQuaternion = new Quaternion();
 
-  constructor() {
+  constructor(config: VehicleConfig = {}) {
+    this.stats = { ...DEFAULT_STATS, ...config.stats };
+
     const bodyGeometry = new BoxGeometry(1.4, 0.6, 2.5);
-    const bodyMaterial = new MeshStandardMaterial({ color: 0x2194ce, metalness: 0.2, roughness: 0.5 });
+    const bodyMaterial = new MeshStandardMaterial({
+      color: new Color(config.bodyColor ?? 0x2194ce),
+      metalness: 0.25,
+      roughness: 0.45
+    });
     const bodyMesh = new Mesh(bodyGeometry, bodyMaterial);
 
     const cabinGeometry = new BoxGeometry(1.1, 0.5, 1.2);
-    const cabinMaterial = new MeshStandardMaterial({ color: 0xffffff, metalness: 0.1, roughness: 0.2 });
+    const cabinMaterial = new MeshStandardMaterial({
+      color: new Color(config.accentColor ?? 0xffffff),
+      metalness: 0.1,
+      roughness: 0.25
+    });
     const cabinMesh = new Mesh(cabinGeometry, cabinMaterial);
     cabinMesh.position.set(0, 0.4, 0.3);
 
@@ -60,20 +88,25 @@ export class Vehicle {
     this.input = state;
   }
 
+  setTransform(position: Vector3, rotation: Quaternion) {
+    this.mesh.position.copy(position);
+    this.mesh.quaternion.copy(rotation);
+  }
+
   update(delta: number, onTrack = true) {
     const forwardPressed = this.input.forward ? 1 : 0;
     const backwardPressed = this.input.backward ? 1 : 0;
 
     const surfaceAcceleration = onTrack
-      ? this.acceleration
-      : this.acceleration * this.offTrackAccelerationScalar;
+      ? this.stats.acceleration
+      : this.stats.acceleration * this.offTrackAccelerationScalar;
 
     if (forwardPressed) {
       this.velocity += surfaceAcceleration * delta;
     }
 
     if (backwardPressed) {
-      this.velocity -= this.brakingForce * delta;
+      this.velocity -= this.stats.brakingForce * delta;
     }
 
     if (!forwardPressed && !backwardPressed) {
@@ -86,13 +119,13 @@ export class Vehicle {
       }
     }
 
-    const maxForwardSpeed = onTrack ? this.maxOnTrackSpeed : this.offTrackMaxSpeed;
+    const maxForwardSpeed = onTrack ? this.stats.maxOnTrackSpeed : this.offTrackMaxSpeed;
     if (this.velocity > maxForwardSpeed) {
       this.velocity = maxForwardSpeed;
     }
 
-    if (this.velocity < this.maxReverseSpeed) {
-      this.velocity = this.maxReverseSpeed;
+    if (this.velocity < this.stats.maxReverseSpeed) {
+      this.velocity = this.stats.maxReverseSpeed;
     }
 
     if (!onTrack && this.velocity > 0) {
@@ -108,7 +141,7 @@ export class Vehicle {
       const turnInput = (this.input.left ? 1 : 0) - (this.input.right ? 1 : 0);
       if (turnInput !== 0) {
         const turnScalar = onTrack ? 1 : this.offTrackTurnScalar;
-        const angularVelocity = turnInput * this.turnRate * turnScalar * Math.sign(this.velocity);
+        const angularVelocity = turnInput * this.stats.turnRate * turnScalar * Math.sign(this.velocity);
         this.tempQuaternion.setFromAxisAngle(Y_AXIS, angularVelocity * delta);
         this.mesh.quaternion.multiply(this.tempQuaternion);
       }
@@ -117,5 +150,13 @@ export class Vehicle {
 
   getSpeedKph() {
     return Math.max(0, this.velocity) * 3.6;
+  }
+
+  getSignedSpeed() {
+    return this.velocity;
+  }
+
+  getForwardVector(out = new Vector3()) {
+    return out.set(0, 0, 1).applyQuaternion(this.mesh.quaternion).normalize();
   }
 }

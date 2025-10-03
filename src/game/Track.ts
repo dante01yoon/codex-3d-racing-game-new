@@ -9,10 +9,19 @@ import {
   LineBasicMaterial,
   Mesh,
   MeshStandardMaterial,
+  Quaternion,
   Vector3
 } from 'three';
 
+export interface ProgressInfo {
+  distance: number;
+  normalized: number;
+  checkpointIndex: number;
+  onTrack: boolean;
+}
+
 const UP = new Vector3(0, 1, 0);
+const FORWARD = new Vector3(0, 0, 1);
 
 export class Track {
   readonly mesh = new Group();
@@ -22,6 +31,15 @@ export class Track {
   private readonly halfWidth: number;
   private readonly startPoint: Vector3;
   private readonly startDirection: Vector3;
+  private readonly cumulativeLengths: number[];
+  private readonly segmentLengths: number[];
+  private readonly totalLength: number;
+  private readonly checkpointCount = 12;
+  private readonly checkpointDistances: number[];
+
+  private readonly tempVector = new Vector3();
+  private readonly tempVectorB = new Vector3();
+  private readonly tempQuaternion = new Quaternion();
 
   constructor() {
     const controlPoints = [
@@ -48,11 +66,26 @@ export class Track {
     this.startPoint = this.centerline[0]?.clone() ?? new Vector3();
     this.startDirection = this.path.getTangentAt(0).clone().normalize();
 
+    const pointCount = spacedPoints.length;
+    this.cumulativeLengths = new Array(pointCount).fill(0);
+    this.segmentLengths = new Array(pointCount).fill(0);
+
+    let lengthAccumulator = 0;
+    for (let i = 0; i < pointCount; i++) {
+      const current = spacedPoints[i];
+      const next = spacedPoints[(i + 1) % pointCount];
+      const segmentLength = current.distanceTo(next);
+      this.segmentLengths[i] = segmentLength;
+      lengthAccumulator += segmentLength;
+      this.cumulativeLengths[i] = lengthAccumulator;
+    }
+
+    this.totalLength = lengthAccumulator;
+
     const positions: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
 
-    const pointCount = spacedPoints.length;
     const tangent = new Vector3();
     const side = new Vector3();
 
@@ -116,6 +149,62 @@ export class Track {
     const centerlineMaterial = new LineBasicMaterial({ color: 0xf5f5f5 });
     const centerline = new Line(centerlineGeometry, centerlineMaterial);
     this.mesh.add(centerline);
+
+    this.checkpointDistances = [];
+    const checkpointMaterial = new MeshStandardMaterial({
+      color: 0xfad648,
+      metalness: 0.2,
+      emissive: 0x332200,
+      roughness: 0.3,
+      transparent: true,
+      opacity: 0.8,
+      side: DoubleSide
+    });
+
+    for (let i = 0; i < this.checkpointCount; i++) {
+      const distance = (this.totalLength / this.checkpointCount) * i;
+      this.checkpointDistances.push(distance);
+
+      const marker = new Mesh(new CircleGeometry(5, 32), checkpointMaterial);
+      const point = this.getPointAtDistance(distance, this.tempVector).setY(0.05);
+      const tangentVector = this.getDirectionAtDistance(distance, this.tempVectorB);
+
+      this.tempQuaternion.setFromUnitVectors(FORWARD, tangentVector);
+      marker.quaternion.copy(this.tempQuaternion);
+      marker.rotateX(Math.PI / 2);
+      marker.position.copy(point);
+      marker.renderOrder = 1;
+
+      this.mesh.add(marker);
+    }
+  }
+
+  getStartPosition() {
+    return this.startPoint.clone();
+  }
+
+  getStartDirection() {
+    return this.startDirection.clone();
+  }
+
+  getTotalLength() {
+    return this.totalLength;
+  }
+
+  getCheckpointDistances() {
+    return [...this.checkpointDistances];
+  }
+
+  getPointAtDistance(distance: number, target = new Vector3()) {
+    const wrapped = ((distance % this.totalLength) + this.totalLength) % this.totalLength;
+    const t = wrapped / this.totalLength;
+    return this.path.getPointAt(t, target);
+  }
+
+  getDirectionAtDistance(distance: number, target = new Vector3()) {
+    const wrapped = ((distance % this.totalLength) + this.totalLength) % this.totalLength;
+    const t = wrapped / this.totalLength;
+    return this.path.getTangentAt(t, target).normalize();
   }
 
   isPointOnTrack(position: Vector3) {
@@ -131,11 +220,44 @@ export class Track {
     return Math.sqrt(minDistanceSq) <= this.halfWidth;
   }
 
-  getStartPosition() {
-    return this.startPoint.clone();
-  }
+  getProgress(position: Vector3): ProgressInfo {
+    const pointCount = this.centerline.length;
+    let nearestIndex = 0;
+    let nearestDistanceSq = Infinity;
 
-  getStartDirection() {
-    return this.startDirection.clone();
+    for (let i = 0; i < pointCount; i++) {
+      const distSq = position.distanceToSquared(this.centerline[i]);
+      if (distSq < nearestDistanceSq) {
+        nearestDistanceSq = distSq;
+        nearestIndex = i;
+      }
+    }
+
+    const nextIndex = (nearestIndex + 1) % pointCount;
+    const startPoint = this.centerline[nearestIndex];
+    const endPoint = this.centerline[nextIndex];
+
+    this.tempVector.copy(endPoint).sub(startPoint);
+    const segmentLength = this.tempVector.length();
+    let projectionT = 0;
+
+    if (segmentLength > 0) {
+      const toPosition = this.tempVectorB.copy(position).sub(startPoint);
+      projectionT = toPosition.dot(this.tempVector) / (segmentLength * segmentLength);
+    }
+
+    projectionT = Math.min(1, Math.max(0, projectionT));
+
+    const startDistance = nearestIndex === 0 ? 0 : this.cumulativeLengths[nearestIndex - 1];
+    const distance = startDistance + segmentLength * projectionT;
+    const normalized = distance / this.totalLength;
+    const checkpointIndex = Math.floor((normalized % 1) * this.checkpointCount);
+
+    return {
+      distance,
+      normalized,
+      checkpointIndex,
+      onTrack: Math.sqrt(nearestDistanceSq) <= this.halfWidth
+    };
   }
 }
