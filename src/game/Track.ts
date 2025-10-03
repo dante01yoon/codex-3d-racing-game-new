@@ -25,6 +25,27 @@ export interface TrackBounds {
   max: Vector3;
 }
 
+export interface TrackConfig {
+  controlPoints?: Array<Vector3 | { x: number; y?: number; z: number }>;
+  halfWidth?: number;
+  checkpointCount?: number;
+  smoothing?: number;
+  loop?: boolean;
+}
+
+const DEFAULT_CONTROL_POINTS = [
+  new Vector3(0, 0, 220),
+  new Vector3(140, 0, 180),
+  new Vector3(240, 0, 40),
+  new Vector3(210, 0, -140),
+  new Vector3(60, 0, -240),
+  new Vector3(-90, 0, -260),
+  new Vector3(-230, 0, -170),
+  new Vector3(-280, 0, -10),
+  new Vector3(-210, 0, 160),
+  new Vector3(-40, 0, 240)
+];
+
 const UP = new Vector3(0, 1, 0);
 const FORWARD = new Vector3(0, 0, 1);
 
@@ -39,7 +60,7 @@ export class Track {
   private readonly cumulativeLengths: number[];
   private readonly segmentLengths: number[];
   private readonly totalLength: number;
-  private readonly checkpointCount = 12;
+  private readonly checkpointCount: number;
   private readonly checkpointDistances: number[];
   private readonly boundsMin = new Vector3(Number.POSITIVE_INFINITY, 0, Number.POSITIVE_INFINITY);
   private readonly boundsMax = new Vector3(Number.NEGATIVE_INFINITY, 0, Number.NEGATIVE_INFINITY);
@@ -48,26 +69,28 @@ export class Track {
   private readonly tempVectorB = new Vector3();
   private readonly tempQuaternion = new Quaternion();
 
-  constructor() {
-    const controlPoints = [
-      new Vector3(0, 0, 220),
-      new Vector3(140, 0, 180),
-      new Vector3(240, 0, 40),
-      new Vector3(210, 0, -140),
-      new Vector3(60, 0, -240),
-      new Vector3(-90, 0, -260),
-      new Vector3(-230, 0, -170),
-      new Vector3(-280, 0, -10),
-      new Vector3(-210, 0, 160),
-      new Vector3(-40, 0, 240)
-    ];
+  constructor(config: TrackConfig = {}) {
+    const {
+      controlPoints = DEFAULT_CONTROL_POINTS,
+      halfWidth = 11,
+      checkpointCount = 12,
+      smoothing = 0.45,
+      loop = true
+    } = config;
 
-    this.halfWidth = 11;
-    this.path = new CatmullRomCurve3(controlPoints, true, 'centripetal', 0.45);
+    const curvePoints = controlPoints.map((point) =>
+      point instanceof Vector3 ? point.clone() : new Vector3(point.x, point.y ?? 0, point.z)
+    );
+
+    this.halfWidth = halfWidth;
+    this.checkpointCount = checkpointCount;
+    this.path = new CatmullRomCurve3(curvePoints, loop, 'centripetal', smoothing);
 
     const segments = 480;
     const spacedPoints = this.path.getSpacedPoints(segments);
-    spacedPoints.pop();
+    if (spacedPoints.length > 0 && loop) {
+      spacedPoints.pop();
+    }
 
     const registerBounds = (point: Vector3) => {
       if (point.x < this.boundsMin.x) this.boundsMin.x = point.x;

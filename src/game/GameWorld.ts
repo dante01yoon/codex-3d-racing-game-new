@@ -7,10 +7,12 @@ import { SceneManager } from '../core/SceneManager';
 import { InputManager } from '../input/InputManager';
 import { Hud } from '../ui/Hud';
 import { MiniMap, MiniMapPoint } from '../ui/MiniMap';
+import { ScoreBurst } from '../ui/ScoreBurst';
 import { AIController, AIProfile } from './AIController';
 import { RaceManager, RacerEntry } from './RaceManager';
 import { Track } from './Track';
 import { Vehicle, VehicleConfig } from './Vehicle';
+import { GameMap } from '../maps/types';
 
 const FORWARD_REFERENCE = new Vector3(0, 0, 1);
 const UP = new Vector3(0, 1, 0);
@@ -32,8 +34,10 @@ export class GameWorld {
   private readonly inputManager: InputManager;
   private readonly hud: Hud;
   private readonly miniMap: MiniMap;
+  private readonly scoreBurst: ScoreBurst;
   private readonly stats = new Stats();
 
+  private readonly map: GameMap;
   private readonly track: Track;
   private readonly raceManager: RaceManager;
   private readonly racers: RacerEntry[] = [];
@@ -54,19 +58,22 @@ export class GameWorld {
   private readonly collisionVector = new Vector3();
   private readonly collisionOpposite = new Vector3();
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, map: GameMap) {
+    this.map = map;
     this.renderer = new Renderer(canvas);
     this.sceneManager = new SceneManager();
-    this.track = new Track();
+    this.track = new Track(map.trackConfig);
     this.raceManager = new RaceManager(this.track, this.totalLaps);
+
+    this.sceneManager.root.add(this.track.mesh);
+    map.decorateScene?.(this.track, this.sceneManager.root);
 
     const centerline2d = this.track.getCenterlinePoints().map((point) => ({ x: point.x, z: point.z }));
     this.miniMap = new MiniMap(centerline2d, this.track.getBounds());
 
-    this.sceneManager.root.add(this.track.mesh);
-
     this.inputManager = new InputManager();
     this.hud = new Hud();
+    this.scoreBurst = new ScoreBurst();
 
     this.loop = new Loop(this.update);
     this.stats.showPanel(0);
@@ -104,6 +111,7 @@ export class GameWorld {
     this.inputManager.dispose();
     this.hud.dispose();
     this.miniMap.dispose();
+    this.scoreBurst.dispose();
     document.body.removeChild(this.stats.dom);
     window.removeEventListener('resize', this.handleResize);
   }
@@ -127,7 +135,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x2194ce,
           accentColor: 0xffffff,
-          stats: { maxOnTrackSpeed: 58, acceleration: 36, turnRate: 2.1 }
+          stats: { maxOnTrackSpeed: 58, acceleration: 36, turnRate: 1.9 }
         }
       },
       {
@@ -139,7 +147,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0xe94f37,
           accentColor: 0xfee08b,
-          stats: { maxOnTrackSpeed: 62, acceleration: 38, turnRate: 2.4 }
+          stats: { maxOnTrackSpeed: 62, acceleration: 39, turnRate: 2.3 }
         },
         aiProfile: {
           id: 'ari',
@@ -159,7 +167,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x8c54ff,
           accentColor: 0xf8f9ff,
-          stats: { maxOnTrackSpeed: 56, acceleration: 33, turnRate: 2.9 }
+          stats: { maxOnTrackSpeed: 56, acceleration: 33, turnRate: 2.8 }
         },
         aiProfile: {
           id: 'nova',
@@ -179,7 +187,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x2ecc71,
           accentColor: 0xd1ffd6,
-          stats: { maxOnTrackSpeed: 54, acceleration: 38, turnRate: 2.2 }
+          stats: { maxOnTrackSpeed: 54, acceleration: 38, turnRate: 2.1 }
         },
         aiProfile: {
           id: 'rhett',
@@ -255,6 +263,7 @@ export class GameWorld {
         const progressUpdate = this.raceManager.updateRacerProgress(racer.id, progress);
         if (racer.id === this.playerId && progressUpdate.scoreEarned > 0) {
           this.hud.flashScore(progressUpdate.scoreEarned);
+          this.scoreBurst.show(progressUpdate.scoreEarned, progressUpdate.lapCompleted);
         }
       });
     }

@@ -1,10 +1,12 @@
 import {
   BoxGeometry,
   Color,
+  CylinderGeometry,
   Group,
   Mesh,
   MeshStandardMaterial,
   Quaternion,
+  TorusGeometry,
   Vector3
 } from 'three';
 
@@ -27,7 +29,7 @@ const DEFAULT_STATS: VehicleStats = {
   maxReverseSpeed: -14,
   acceleration: 34,
   brakingForce: 52,
-  turnRate: 1.9
+  turnRate: 1.6
 };
 
 export interface InputState {
@@ -47,7 +49,7 @@ export class Vehicle {
   private input: InputState = { ...DEFAULT_INPUT };
 
   private readonly offTrackAccelerationScalar = 0.45;
-  private readonly offTrackTurnScalar = 0.6;
+  private readonly offTrackTurnScalar = 0.55;
   private readonly offTrackMaxSpeed = 22;
   private readonly offTrackDrag = 0.86;
 
@@ -64,27 +66,103 @@ export class Vehicle {
     this.stats = { ...DEFAULT_STATS, ...config.stats };
 
     const bodyColor = config.bodyColor ?? 0x2194ce;
-    const bodyGeometry = new BoxGeometry(1.4, 0.6, 2.5);
-    const bodyMaterial = new MeshStandardMaterial({
-      color: new Color(bodyColor),
-      metalness: 0.25,
-      roughness: 0.45
-    });
-    const bodyMesh = new Mesh(bodyGeometry, bodyMaterial);
+    const accentColor = config.accentColor ?? 0xffffff;
 
-    const cabinGeometry = new BoxGeometry(1.1, 0.5, 1.2);
-    const cabinMaterial = new MeshStandardMaterial({
-      color: new Color(config.accentColor ?? 0xffffff),
-      metalness: 0.1,
-      roughness: 0.25
+    const chassis = new Mesh(
+      new BoxGeometry(1.8, 0.32, 4.4),
+      new MeshStandardMaterial({ color: new Color(bodyColor), metalness: 0.35, roughness: 0.32 })
+    );
+    chassis.position.y = 0.28;
+
+    const floor = new Mesh(
+      new BoxGeometry(2.2, 0.08, 4.8),
+      new MeshStandardMaterial({ color: 0x0f141a, metalness: 0.4, roughness: 0.4 })
+    );
+    floor.position.y = 0.2;
+
+    const nose = new Mesh(
+      new BoxGeometry(0.45, 0.22, 1.6),
+      new MeshStandardMaterial({ color: new Color(bodyColor).offsetHSL(0, -0.02, 0.05) })
+    );
+    nose.position.set(0, 0.32, 2.4);
+
+    const frontWing = new Mesh(
+      new BoxGeometry(2.6, 0.08, 0.9),
+      new MeshStandardMaterial({ color: 0x1b1e24, metalness: 0.4, roughness: 0.45 })
+    );
+    frontWing.position.set(0, 0.25, 2.9);
+
+    const rearWing = new Mesh(
+      new BoxGeometry(1.6, 0.1, 0.6),
+      new MeshStandardMaterial({ color: 0x1b1e24, metalness: 0.35, roughness: 0.5 })
+    );
+    rearWing.position.set(0, 0.65, -2.1);
+
+    const rearWingPillar = new Mesh(
+      new BoxGeometry(0.25, 0.5, 0.2),
+      new MeshStandardMaterial({ color: 0x1b1e24, metalness: 0.35, roughness: 0.5 })
+    );
+    rearWingPillar.position.set(0, 0.45, -2.4);
+
+    const cockpit = new Mesh(
+      new BoxGeometry(0.7, 0.45, 0.9),
+      new MeshStandardMaterial({ color: new Color(accentColor), metalness: 0.2, roughness: 0.3 })
+    );
+    cockpit.position.set(0, 0.55, -0.2);
+
+    const halo = new Mesh(
+      new TorusGeometry(0.5, 0.07, 12, 24, Math.PI * 1.2),
+      new MeshStandardMaterial({ color: 0x1c2128, metalness: 0.4, roughness: 0.35 })
+    );
+    halo.rotation.x = Math.PI / 2;
+    halo.position.set(0, 0.78, -0.3);
+
+    const sidePodMaterial = new MeshStandardMaterial({
+      color: new Color(bodyColor).offsetHSL(0, -0.05, -0.05),
+      metalness: 0.25,
+      roughness: 0.55
     });
-    const cabinMesh = new Mesh(cabinGeometry, cabinMaterial);
-    cabinMesh.position.set(0, 0.4, 0.3);
+    const leftPod = new Mesh(new BoxGeometry(0.4, 0.3, 1.6), sidePodMaterial);
+    leftPod.position.set(-0.95, 0.36, -0.4);
+    const rightPod = leftPod.clone();
+    rightPod.position.x = 0.95;
+
+    const wheelMaterial = new MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+    const wheelGeometry = new CylinderGeometry(0.46, 0.46, 0.38, 18);
+    const wheelPositions = [
+      { x: -0.95, z: 2.1 },
+      { x: 0.95, z: 2.1 },
+      { x: -0.9, z: -1.7 },
+      { x: 0.9, z: -1.7 }
+    ];
 
     this.mesh = new Group();
-    this.mesh.add(bodyMesh);
-    this.mesh.add(cabinMesh);
-    this.mesh.castShadow = true;
+    this.mesh.add(floor);
+    this.mesh.add(chassis);
+    this.mesh.add(nose);
+    this.mesh.add(frontWing);
+    this.mesh.add(rearWing);
+    this.mesh.add(rearWingPillar);
+    this.mesh.add(cockpit);
+    this.mesh.add(halo);
+    this.mesh.add(leftPod);
+    this.mesh.add(rightPod);
+
+    wheelPositions.forEach(({ x, z }) => {
+      const wheel = new Mesh(wheelGeometry, wheelMaterial);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(x, 0.46, z);
+      wheel.castShadow = true;
+      wheel.receiveShadow = true;
+      this.mesh.add(wheel);
+    });
+
+    this.mesh.traverse((child) => {
+      if (child instanceof Mesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
 
     this.bodyColorHex = `#${bodyColor.toString(16).padStart(6, '0')}`;
   }
@@ -160,9 +238,9 @@ export class Vehicle {
       const turnInput = (this.input.left ? 1 : 0) - (this.input.right ? 1 : 0);
       if (turnInput !== 0) {
         const turnScalar = onTrack ? 1 : this.offTrackTurnScalar;
-        const speedFactor = Math.min(1, Math.abs(this.velocity) / (this.stats.maxOnTrackSpeed * 0.9));
-        const grip = onTrack ? 0.78 : 0.55;
-        const response = Math.max(0.25, speedFactor * grip);
+        const speedFactor = Math.min(1, Math.abs(this.velocity) / (this.stats.maxOnTrackSpeed * 0.95));
+        const grip = onTrack ? 0.62 : 0.5;
+        const response = Math.max(0.2, speedFactor * grip);
         const angularVelocity = turnInput * this.stats.turnRate * turnScalar * response * Math.sign(this.velocity);
         this.tempQuaternion.setFromAxisAngle(Y_AXIS, angularVelocity * delta);
         this.mesh.quaternion.multiply(this.tempQuaternion);
