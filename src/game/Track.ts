@@ -20,6 +20,11 @@ export interface ProgressInfo {
   onTrack: boolean;
 }
 
+export interface TrackBounds {
+  min: Vector3;
+  max: Vector3;
+}
+
 const UP = new Vector3(0, 1, 0);
 const FORWARD = new Vector3(0, 0, 1);
 
@@ -36,6 +41,8 @@ export class Track {
   private readonly totalLength: number;
   private readonly checkpointCount = 12;
   private readonly checkpointDistances: number[];
+  private readonly boundsMin = new Vector3(Number.POSITIVE_INFINITY, 0, Number.POSITIVE_INFINITY);
+  private readonly boundsMax = new Vector3(Number.NEGATIVE_INFINITY, 0, Number.NEGATIVE_INFINITY);
 
   private readonly tempVector = new Vector3();
   private readonly tempVectorB = new Vector3();
@@ -62,7 +69,17 @@ export class Track {
     const spacedPoints = this.path.getSpacedPoints(segments);
     spacedPoints.pop();
 
-    this.centerline = spacedPoints.map((point) => point.clone());
+    const registerBounds = (point: Vector3) => {
+      if (point.x < this.boundsMin.x) this.boundsMin.x = point.x;
+      if (point.z < this.boundsMin.z) this.boundsMin.z = point.z;
+      if (point.x > this.boundsMax.x) this.boundsMax.x = point.x;
+      if (point.z > this.boundsMax.z) this.boundsMax.z = point.z;
+    };
+
+    this.centerline = spacedPoints.map((point) => {
+      registerBounds(point);
+      return point.clone();
+    });
     this.startPoint = this.centerline[0]?.clone() ?? new Vector3();
     this.startDirection = this.path.getTangentAt(0).clone().normalize();
 
@@ -100,6 +117,9 @@ export class Track {
 
       positions.push(left.x, left.y, left.z);
       positions.push(right.x, right.y, right.z);
+
+      registerBounds(left);
+      registerBounds(right);
 
       const v = u * pointCount * 0.2;
       uvs.push(0, v);
@@ -259,5 +279,17 @@ export class Track {
       checkpointIndex,
       onTrack: Math.sqrt(nearestDistanceSq) <= this.halfWidth
     };
+  }
+
+  getHalfWidth() {
+    return this.halfWidth;
+  }
+
+  getCenterlinePoints() {
+    return this.centerline.map((point) => point.clone());
+  }
+
+  getBounds(): TrackBounds {
+    return { min: this.boundsMin.clone(), max: this.boundsMax.clone() };
   }
 }

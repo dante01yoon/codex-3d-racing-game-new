@@ -27,7 +27,7 @@ const DEFAULT_STATS: VehicleStats = {
   maxReverseSpeed: -14,
   acceleration: 34,
   brakingForce: 52,
-  turnRate: 2.2
+  turnRate: 1.9
 };
 
 export interface InputState {
@@ -58,12 +58,15 @@ export class Vehicle {
   private readonly tempQuaternion = new Quaternion();
   private readonly tempLateral = new Vector3();
 
+  private readonly bodyColorHex: string;
+
   constructor(config: VehicleConfig = {}) {
     this.stats = { ...DEFAULT_STATS, ...config.stats };
 
+    const bodyColor = config.bodyColor ?? 0x2194ce;
     const bodyGeometry = new BoxGeometry(1.4, 0.6, 2.5);
     const bodyMaterial = new MeshStandardMaterial({
-      color: new Color(config.bodyColor ?? 0x2194ce),
+      color: new Color(bodyColor),
       metalness: 0.25,
       roughness: 0.45
     });
@@ -81,8 +84,9 @@ export class Vehicle {
     this.mesh = new Group();
     this.mesh.add(bodyMesh);
     this.mesh.add(cabinMesh);
-
     this.mesh.castShadow = true;
+
+    this.bodyColorHex = `#${bodyColor.toString(16).padStart(6, '0')}`;
   }
 
   setInput(state: InputState) {
@@ -156,7 +160,10 @@ export class Vehicle {
       const turnInput = (this.input.left ? 1 : 0) - (this.input.right ? 1 : 0);
       if (turnInput !== 0) {
         const turnScalar = onTrack ? 1 : this.offTrackTurnScalar;
-        const angularVelocity = turnInput * this.stats.turnRate * turnScalar * Math.sign(this.velocity);
+        const speedFactor = Math.min(1, Math.abs(this.velocity) / (this.stats.maxOnTrackSpeed * 0.9));
+        const grip = onTrack ? 0.78 : 0.55;
+        const response = Math.max(0.25, speedFactor * grip);
+        const angularVelocity = turnInput * this.stats.turnRate * turnScalar * response * Math.sign(this.velocity);
         this.tempQuaternion.setFromAxisAngle(Y_AXIS, angularVelocity * delta);
         this.mesh.quaternion.multiply(this.tempQuaternion);
       }
@@ -199,5 +206,9 @@ export class Vehicle {
     const deflectAmount = strength * 0.12 * deflectSign;
     this.tempQuaternion.setFromAxisAngle(Y_AXIS, deflectAmount);
     this.mesh.quaternion.multiply(this.tempQuaternion);
+  }
+
+  getBodyColorHex() {
+    return this.bodyColorHex;
   }
 }

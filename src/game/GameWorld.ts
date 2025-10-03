@@ -6,6 +6,7 @@ import { Renderer } from '../core/Renderer';
 import { SceneManager } from '../core/SceneManager';
 import { InputManager } from '../input/InputManager';
 import { Hud } from '../ui/Hud';
+import { MiniMap, MiniMapPoint } from '../ui/MiniMap';
 import { AIController, AIProfile } from './AIController';
 import { RaceManager, RacerEntry } from './RaceManager';
 import { Track } from './Track';
@@ -30,6 +31,7 @@ export class GameWorld {
   private readonly loop: Loop;
   private readonly inputManager: InputManager;
   private readonly hud: Hud;
+  private readonly miniMap: MiniMap;
   private readonly stats = new Stats();
 
   private readonly track: Track;
@@ -45,7 +47,7 @@ export class GameWorld {
   private playerId = 'player';
   private playerVehicle!: Vehicle;
   private readonly totalLaps = 3;
-  private readonly raceDuration = 210;
+  private readonly raceDuration = 180;
   private remainingTime = this.raceDuration;
   private raceOver = false;
   private readonly collisionRadius = 2.6;
@@ -57,6 +59,9 @@ export class GameWorld {
     this.sceneManager = new SceneManager();
     this.track = new Track();
     this.raceManager = new RaceManager(this.track, this.totalLaps);
+
+    const centerline2d = this.track.getCenterlinePoints().map((point) => ({ x: point.x, z: point.z }));
+    this.miniMap = new MiniMap(centerline2d, this.track.getBounds());
 
     this.sceneManager.root.add(this.track.mesh);
 
@@ -98,6 +103,7 @@ export class GameWorld {
     this.renderer.dispose();
     this.inputManager.dispose();
     this.hud.dispose();
+    this.miniMap.dispose();
     document.body.removeChild(this.stats.dom);
     window.removeEventListener('resize', this.handleResize);
   }
@@ -121,7 +127,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x2194ce,
           accentColor: 0xffffff,
-          stats: { maxOnTrackSpeed: 58, acceleration: 36, turnRate: 2.5 }
+          stats: { maxOnTrackSpeed: 58, acceleration: 36, turnRate: 2.1 }
         }
       },
       {
@@ -133,7 +139,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0xe94f37,
           accentColor: 0xfee08b,
-          stats: { maxOnTrackSpeed: 62, acceleration: 38, turnRate: 2.5 }
+          stats: { maxOnTrackSpeed: 62, acceleration: 38, turnRate: 2.4 }
         },
         aiProfile: {
           id: 'ari',
@@ -153,7 +159,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x8c54ff,
           accentColor: 0xf8f9ff,
-          stats: { maxOnTrackSpeed: 56, acceleration: 33, turnRate: 3 }
+          stats: { maxOnTrackSpeed: 56, acceleration: 33, turnRate: 2.9 }
         },
         aiProfile: {
           id: 'nova',
@@ -283,6 +289,14 @@ export class GameWorld {
         raceOver: this.raceOver
       });
     }
+
+    const minimapPoints: MiniMapPoint[] = this.racers.map((racer) => ({
+      x: racer.vehicle.mesh.position.x,
+      z: racer.vehicle.mesh.position.z,
+      color: racer.vehicle.getBodyColorHex(),
+      isPlayer: racer.id === this.playerId
+    }));
+    this.miniMap.update(minimapPoints);
 
     this.updateCamera(delta);
     this.renderer.render(this.sceneManager.scene, this.sceneManager.camera);
