@@ -19,6 +19,7 @@ interface RacerInternalState {
   checkpointsCleared: number;
   progress: ProgressInfo;
   onTrack: boolean;
+  score: number;
 }
 
 export interface RacerStatus {
@@ -35,10 +36,17 @@ export interface RacerStatus {
   totalDistance: number;
   onTrack: boolean;
   vehicle: Vehicle;
+  score: number;
 }
 
 export interface LeaderboardEntry extends RacerStatus {
   position: number;
+}
+
+export interface ProgressUpdate {
+  checkpointsPassed: number;
+  scoreEarned: number;
+  lapCompleted: boolean;
 }
 
 export class RaceManager {
@@ -47,6 +55,8 @@ export class RaceManager {
   private readonly checkpointCount: number;
   private readonly racers = new Map<string, RacerEntry>();
   private readonly internalState = new Map<string, RacerInternalState>();
+  private static readonly CHECKPOINT_POINTS = 150;
+  private static readonly LAP_COMPLETION_POINTS = 500;
 
   constructor(track: Track, totalLaps: number) {
     this.track = track;
@@ -69,18 +79,23 @@ export class RaceManager {
         checkpointIndex: 0,
         onTrack: true
       },
-      onTrack: true
+      onTrack: true,
+      score: 0
     });
   }
 
-  updateRacerProgress(id: string, progress: ProgressInfo) {
+  updateRacerProgress(id: string, progress: ProgressInfo): ProgressUpdate {
     const state = this.internalState.get(id);
     if (!state) {
-      return;
+      return { checkpointsPassed: 0, scoreEarned: 0, lapCompleted: false };
     }
 
     const normalizedWrapped = ((progress.normalized % 1) + 1) % 1;
     const deltaNormalized = normalizedWrapped - state.lastNormalized;
+
+    let checkpointsPassed = 0;
+    let scoreEarned = 0;
+    let lapCompleted = false;
 
     if (!state.finished) {
       if (deltaNormalized < -0.5) {
@@ -88,6 +103,14 @@ export class RaceManager {
         if (state.lap > this.totalLaps) {
           state.finished = true;
           state.lastNormalized = 1;
+          scoreEarned += RaceManager.LAP_COMPLETION_POINTS;
+          state.score += RaceManager.LAP_COMPLETION_POINTS;
+          lapCompleted = true;
+        }
+        if (!state.finished) {
+          scoreEarned += RaceManager.LAP_COMPLETION_POINTS;
+          state.score += RaceManager.LAP_COMPLETION_POINTS;
+          lapCompleted = true;
         }
       } else if (deltaNormalized > 0.5) {
         state.lap = Math.max(1, state.lap - 1);
@@ -96,8 +119,15 @@ export class RaceManager {
       if (progress.checkpointIndex !== state.checkpointIndex) {
         const diff = progress.checkpointIndex - state.checkpointIndex;
         const wrappedDiff = diff < 0 ? diff + this.checkpointCount : diff;
-        state.checkpointsCleared += wrappedDiff;
+        const movingForward = deltaNormalized < 0.5;
         state.checkpointIndex = progress.checkpointIndex;
+        if (movingForward && wrappedDiff > 0) {
+          state.checkpointsCleared += wrappedDiff;
+          checkpointsPassed = wrappedDiff;
+          const checkpointPoints = wrappedDiff * RaceManager.CHECKPOINT_POINTS;
+          scoreEarned += checkpointPoints;
+          state.score += checkpointPoints;
+        }
       }
     }
 
@@ -109,6 +139,8 @@ export class RaceManager {
       ? this.totalLaps
       : state.lap - 1 + state.lastNormalized;
     state.totalDistance = completedPortion * this.track.getTotalLength();
+
+    return { checkpointsPassed, scoreEarned, lapCompleted };
   }
 
   getRacerStatus(id: string): RacerStatus | undefined {
@@ -134,7 +166,8 @@ export class RaceManager {
       checkpointIndex: state.checkpointIndex,
       totalDistance: state.totalDistance,
       onTrack: state.onTrack,
-      vehicle: racer.vehicle
+      vehicle: racer.vehicle,
+      score: state.score
     };
   }
 
@@ -154,6 +187,10 @@ export class RaceManager {
     }
 
     standings.sort((a, b) => {
+      if (a.score !== b.score) {
+        return b.score - a.score;
+      }
+
       if (a.finished && !b.finished) {
         return -1;
       }

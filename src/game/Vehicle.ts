@@ -23,10 +23,10 @@ export interface VehicleConfig {
 }
 
 const DEFAULT_STATS: VehicleStats = {
-  maxOnTrackSpeed: 42,
-  maxReverseSpeed: -12,
-  acceleration: 32,
-  brakingForce: 48,
+  maxOnTrackSpeed: 55,
+  maxReverseSpeed: -14,
+  acceleration: 34,
+  brakingForce: 52,
   turnRate: 2.2
 };
 
@@ -56,6 +56,7 @@ export class Vehicle {
 
   private readonly tempDirection = new Vector3();
   private readonly tempQuaternion = new Quaternion();
+  private readonly tempLateral = new Vector3();
 
   constructor(config: VehicleConfig = {}) {
     this.stats = { ...DEFAULT_STATS, ...config.stats };
@@ -91,6 +92,20 @@ export class Vehicle {
   setTransform(position: Vector3, rotation: Quaternion) {
     this.mesh.position.copy(position);
     this.mesh.quaternion.copy(rotation);
+  }
+
+  halt() {
+    this.velocity = 0;
+    this.input = { ...DEFAULT_INPUT };
+  }
+
+  getVelocity() {
+    return this.velocity;
+  }
+
+  setVelocity(value: number) {
+    const clamped = Math.max(this.stats.maxReverseSpeed, Math.min(value, this.stats.maxOnTrackSpeed * 1.2));
+    this.velocity = clamped;
   }
 
   update(delta: number, onTrack = true) {
@@ -158,5 +173,31 @@ export class Vehicle {
 
   getForwardVector(out = new Vector3()) {
     return out.set(0, 0, 1).applyQuaternion(this.mesh.quaternion).normalize();
+  }
+
+  applyCollisionResponse(normal: Vector3, strength: number) {
+    this.tempLateral.copy(normal);
+    this.tempLateral.y = 0;
+    const length = this.tempLateral.length();
+    if (length === 0) {
+      return;
+    }
+
+    this.tempLateral.multiplyScalar(1 / length);
+
+    const pushDistance = Math.max(0.1, strength * 0.6);
+    this.mesh.position.addScaledVector(this.tempLateral, pushDistance);
+    this.mesh.position.y = Math.max(0.35, this.mesh.position.y);
+
+    if (this.velocity > 0) {
+      this.velocity *= 0.82;
+      this.velocity = Math.min(this.velocity + strength * 6, this.stats.maxOnTrackSpeed * 1.05);
+    }
+
+    const forward = this.getForwardVector(this.tempDirection);
+    const deflectSign = Math.sign(this.tempLateral.cross(forward).y || 1);
+    const deflectAmount = strength * 0.12 * deflectSign;
+    this.tempQuaternion.setFromAxisAngle(Y_AXIS, deflectAmount);
+    this.mesh.quaternion.multiply(this.tempQuaternion);
   }
 }

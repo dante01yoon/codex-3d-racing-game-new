@@ -44,12 +44,19 @@ export class GameWorld {
 
   private playerId = 'player';
   private playerVehicle!: Vehicle;
+  private readonly totalLaps = 3;
+  private readonly raceDuration = 210;
+  private remainingTime = this.raceDuration;
+  private raceOver = false;
+  private readonly collisionRadius = 2.6;
+  private readonly collisionVector = new Vector3();
+  private readonly collisionOpposite = new Vector3();
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
     this.sceneManager = new SceneManager();
     this.track = new Track();
-    this.raceManager = new RaceManager(this.track, 3);
+    this.raceManager = new RaceManager(this.track, this.totalLaps);
 
     this.sceneManager.root.add(this.track.mesh);
 
@@ -75,6 +82,9 @@ export class GameWorld {
       throw new Error('Player vehicle failed to initialize');
     }
     this.inputManager.subscribe((state) => {
+      if (this.raceOver) {
+        return;
+      }
       this.playerVehicle.setInput(state);
     });
   }
@@ -111,7 +121,7 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x2194ce,
           accentColor: 0xffffff,
-          stats: { maxOnTrackSpeed: 44, turnRate: 2.4 }
+          stats: { maxOnTrackSpeed: 58, acceleration: 36, turnRate: 2.5 }
         }
       },
       {
@@ -123,12 +133,12 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0xe94f37,
           accentColor: 0xfee08b,
-          stats: { maxOnTrackSpeed: 47, acceleration: 34, turnRate: 2.45 }
+          stats: { maxOnTrackSpeed: 62, acceleration: 38, turnRate: 2.5 }
         },
         aiProfile: {
           id: 'ari',
           name: 'Ari Blaze',
-          targetSpeedKph: 190,
+          targetSpeedKph: 220,
           lookAheadDistance: 14,
           corneringSensitivity: 1.05,
           recoveryBias: 0.6
@@ -143,14 +153,14 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x8c54ff,
           accentColor: 0xf8f9ff,
-          stats: { maxOnTrackSpeed: 43, acceleration: 30, turnRate: 2.8 }
+          stats: { maxOnTrackSpeed: 56, acceleration: 33, turnRate: 3 }
         },
         aiProfile: {
           id: 'nova',
           name: 'Nova Drift',
-          targetSpeedKph: 175,
-          lookAheadDistance: 12,
-          corneringSensitivity: 0.8,
+          targetSpeedKph: 205,
+          lookAheadDistance: 13,
+          corneringSensitivity: 0.85,
           recoveryBias: 0.7
         }
       },
@@ -163,14 +173,14 @@ export class GameWorld {
         vehicleConfig: {
           bodyColor: 0x2ecc71,
           accentColor: 0xd1ffd6,
-          stats: { maxOnTrackSpeed: 41, acceleration: 36, turnRate: 2.1 }
+          stats: { maxOnTrackSpeed: 54, acceleration: 38, turnRate: 2.2 }
         },
         aiProfile: {
           id: 'rhett',
           name: 'Rhett Torque',
-          targetSpeedKph: 165,
+          targetSpeedKph: 195,
           lookAheadDistance: 10,
-          corneringSensitivity: 1.2,
+          corneringSensitivity: 1.05,
           recoveryBias: 0.8
         }
       }
@@ -217,30 +227,43 @@ export class GameWorld {
   private update = (delta: number) => {
     this.stats.begin();
 
-    this.aiControllers.forEach((controller) => controller.update(delta));
-
-    let playerStatus = this.raceManager.getRacerStatus(this.playerId);
-
-    this.racers.forEach((racer) => {
-      const onTrack = this.track.isPointOnTrack(racer.vehicle.mesh.position);
-      racer.vehicle.update(delta, onTrack);
-      const progress = this.track.getProgress(racer.vehicle.mesh.position);
-      this.raceManager.updateRacerProgress(racer.id, progress);
-
-      if (racer.id === this.playerId) {
-        playerStatus = this.raceManager.getRacerStatus(racer.id);
+    if (!this.raceOver) {
+      this.remainingTime = Math.max(0, this.remainingTime - delta);
+      if (this.remainingTime <= 0) {
+        this.finishRace();
       }
-    });
+    }
+
+    if (!this.raceOver) {
+      this.aiControllers.forEach((controller) => controller.update(delta));
+
+      this.racers.forEach((racer) => {
+        const onTrack = this.track.isPointOnTrack(racer.vehicle.mesh.position);
+        racer.vehicle.update(delta, onTrack);
+      });
+
+      this.resolveCollisions();
+
+      this.racers.forEach((racer) => {
+        const progress = this.track.getProgress(racer.vehicle.mesh.position);
+        const progressUpdate = this.raceManager.updateRacerProgress(racer.id, progress);
+        if (racer.id === this.playerId && progressUpdate.scoreEarned > 0) {
+          this.hud.flashScore(progressUpdate.scoreEarned);
+        }
+      });
+    }
+
+    const leaderboard = this.raceManager.getLeaderboard();
+    const playerStatus = this.raceManager.getRacerStatus(this.playerId);
 
     if (playerStatus) {
-      const leaderboard = this.raceManager.getLeaderboard();
       const playerEntry = leaderboard.find((entry) => entry.id === this.playerId);
       const position = playerEntry ? playerEntry.position : 1;
 
       this.hud.update({
         speed: this.playerVehicle.getSpeedKph(),
         lap: playerStatus.lap,
-        totalLaps: 3,
+        totalLaps: this.totalLaps,
         lapsRemaining: playerStatus.lapsRemaining,
         position,
         racerCount: leaderboard.length,
@@ -252,8 +275,12 @@ export class GameWorld {
           position: entry.position,
           name: entry.name,
           lap: entry.lap,
-          progressPercent: entry.progressPercent
-        }))
+          progressPercent: entry.progressPercent,
+          score: entry.score
+        })),
+        score: playerStatus.score,
+        timeRemaining: this.remainingTime,
+        raceOver: this.raceOver
       });
     }
 
@@ -261,6 +288,57 @@ export class GameWorld {
     this.renderer.render(this.sceneManager.scene, this.sceneManager.camera);
     this.stats.end();
   };
+
+  private resolveCollisions() {
+    const count = this.racers.length;
+    for (let i = 0; i < count; i++) {
+      const vehicleA = this.racers[i].vehicle;
+      for (let j = i + 1; j < count; j++) {
+        const vehicleB = this.racers[j].vehicle;
+        this.collisionVector
+          .copy(vehicleB.mesh.position)
+          .sub(vehicleA.mesh.position);
+
+        this.collisionVector.y = 0;
+        const distanceSq = this.collisionVector.lengthSq();
+        if (distanceSq === 0) {
+          continue;
+        }
+
+        const radiusSq = this.collisionRadius * this.collisionRadius;
+        if (distanceSq >= radiusSq) {
+          continue;
+        }
+
+        const distance = Math.sqrt(distanceSq);
+        this.collisionVector.multiplyScalar(1 / distance);
+        this.collisionOpposite.copy(this.collisionVector).multiplyScalar(-1);
+
+        const penetration = (this.collisionRadius - distance) * 0.5;
+        vehicleA.applyCollisionResponse(this.collisionOpposite, penetration);
+        vehicleB.applyCollisionResponse(this.collisionVector, penetration);
+      }
+    }
+  }
+
+  private finishRace() {
+    if (this.raceOver) {
+      return;
+    }
+
+    this.raceOver = true;
+    this.remainingTime = 0;
+    this.racers.forEach((racer) => racer.vehicle.halt());
+    const finalStandings = this.raceManager.getLeaderboard();
+    this.hud.showFinalResults(
+      finalStandings.map((entry) => ({
+        position: entry.position,
+        name: entry.name,
+        score: entry.score,
+        lap: entry.lap
+      }))
+    );
+  }
 
   private updateCamera(delta: number) {
     const { camera } = this.sceneManager;
